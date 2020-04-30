@@ -1,0 +1,8 @@
+*.ppm
+.DS_STORE
+*.png
+*.jpeg
+*.gif
+*.js
+.idea
+*.obj
