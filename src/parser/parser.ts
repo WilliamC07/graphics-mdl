@@ -116,11 +116,9 @@ function parseMDL(parsedMDL: ParsedMDL, edgeMatrix: EdgeMatrix, polygonMatrix: P
 }
 
 function mesh(color: SymbolColor, fileName: string, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
-    if(fileName.endsWith(".obj")){
-        objParser(fileName, polygonMatrix);
-        multiplyEdgeMatrix(transformer, polygonMatrix);
-        draw(image, polygonMatrix, color);
-    }
+    objParser(fileName, polygonMatrix);
+    multiplyEdgeMatrix(transformer, polygonMatrix);
+    draw(image, polygonMatrix, color);
 }
 
 function bezier(parameter: string, edgeMatrix: EdgeMatrix){
