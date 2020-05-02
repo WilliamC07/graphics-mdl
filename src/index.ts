@@ -1,4 +1,4 @@
-import parser from "./parser/parser";
+import parse from "./parser/parser";
 import Image from "./image";
 import {createTransformer, toIdentity, toScale} from "./transformations";
 import {createEdgeMatrix, createPolygonMatrix} from "./matrix";
@@ -15,7 +15,7 @@ const startTime = performance.now();
 
 const scriptFileName = process.argv[2]; // 0th argument is 'node', 1st is 'src/index.js' and 2nd is the script file
 
-parser(scriptFileName, edges, polygons, transformer, image);
+parse(scriptFileName, edges, polygons, transformer, image);
 
 console.log(`Took ${performance.now() - startTime} milliseconds to generate image`);
 

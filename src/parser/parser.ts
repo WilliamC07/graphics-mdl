@@ -1,17 +1,13 @@
-import fs from "fs";
 import {
     addEdge,
     EdgeMatrix,
-    multiply,
     multiplyEdgeMatrix, PolygonMatrix,
     toInteger,
-    toMatrixString
 } from "../matrix";
 import {
     toIdentity,
     toMove,
     toRotate,
-    TransformationTypes,
     Axis,
     toScale,
     Transformer,
@@ -20,102 +16,123 @@ import {
 import Image from "../image";
 import {bezierCurve, drawCircle, hermiteCurve, drawBox, drawSphere, drawTorus} from "../render/draw";
 import {objParser} from "./obj-parser";
+const {spawn} = require('child_process');
+import path from 'path'
+import {SymbolColor} from "../render/lighting";
 
-export function *getInstructions(fileName: string): IterableIterator<string>{
-    const lines: string[] = fs.readFileSync(fileName, "utf-8").split("\n");
-    let lineNumber = 0;
-    while(lineNumber < lines.length){
-        yield lines[lineNumber];
-        lineNumber++;
+interface ParsedMDLCommand {
+    args: null|number[]|string[],
+    op: string,
+    constants?: string, // refer to MDLSymbol
+    knob?: string|null,
+    cs?: string|null,
+}
+type ParsedMDLSymbol = [
+    string, // "constants"
+    {
+        // ambient, diffuse, specular factor
+        blue: [number, number, number],
+        green: [number, number, number],
+        red: [number, number, number],
+    }
+]
+interface ParsedMDL {
+    commands: ParsedMDLCommand[],
+    symbols: {
+        [constantName: string]: ParsedMDLSymbol
     }
 }
 
 /**
- * Line drawing instructions. Each instruction is one line long. The subsequent lines are parameters if the given
- * instruction requires parameters.
-"line":
- - Parameter "<x0> <y0> <z0> <x1> <y1> <z1>"
- - Adds the given points to the edge matrix
-"ident":
- - Sets the transform matrix to the identity matrix
-"scale":
- - Parameter: "<scaleX> <scaleY> <scaleZ>"
- - Creates a scale matrix then multiplies the transform matrix by the scale matrix.
-"move":
- - Parameter: "<moveX> <moveY> <moveZ>"
- - Creates a translation matrix and multiplies the transform matrix by the translation matrix
-"rotate":
- - Parameter: "<x|y|z> <degrees>"
- - Creates a rotation matrix and multiples the transform matrix by the rotate matrix
-"display":
- - Clears the image, then render the lines from edge matrix, then display to the screen for the user to see
-"save":
- - Parameter: "<file name>"
- - Clears the image, then render the lines from edge matrix, then save the image to disk
-"quit":
- - Stops parsing
-"apply":
- - Multiplies the edge matrix by the transformation matrix
-"#":
-"<blank line>":
- - Ignore the given line
-
+ * Parses the provided file name to a JSON that can be more easily parsed. Uses a python library to do so.
  * @param fileName
  * @param edgeMatrix
  * @param polygonMatrix
  * @param transformer
  * @param image
  */
-const parser = (fileName: string, edgeMatrix: EdgeMatrix, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image) => {
-    const instructions = getInstructions(fileName);
-    const transformationStack: Transformer[] = [createTransformer()];
+const parse = (fileName: string, edgeMatrix: EdgeMatrix, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image) => {
+    const file_path = path.join(process.cwd(), fileName);
+    const python_parser = spawn('python3', ["./src/parser/ply/main.py", file_path]);
+    let parsedMDL;
+    python_parser.stdout.on('data', function(data: any){
+        parsedMDL = JSON.parse(data.toString());
+        parseMDL(parsedMDL, edgeMatrix, polygonMatrix, image);
+    });
+};
 
-    let instruction: string = instructions.next().value;
-    while(instruction !== undefined){
+const symbols = new Map<string, SymbolColor>();
+// default value if no color is chosen by the mdl file
+const DEFAULT_WHITE = "default.white";
+symbols.set(DEFAULT_WHITE, {
+    red: [0.2, 0.5, 0.5],
+    green: [0.2, 0.5, 0.5],
+    blue: [0.2, 0.5, 0.5]
+})
+
+function parseMDL(parsedMDL: ParsedMDL, edgeMatrix: EdgeMatrix, polygonMatrix: PolygonMatrix, image: Image){
+    // parse the symbols out of the MDL
+    for(const [symbolName, values] of Object.entries(parsedMDL.symbols)){
+        // remove the "constants" entry
+        if(values[0] === "constants"){
+            // example of values[1]: 0.3
+            symbols.set(symbolName, values[1]);
+        }
+    }
+    /* parse the commands */
+
+    // first element of the stack is an identity matrix
+    const transformationStack: Transformer[] = [createTransformer()];
+    for(const command of parsedMDL.commands){
         const transformerPeekStack = transformationStack[transformationStack.length - 1];
 
-        // Comments start with '#'
-        if(instruction.startsWith("#")){
-            instruction = instructions.next().value;
-            continue;
-        }
+        switch(command.op){
+            // constants are parsed out already
+            case 'constants': break;
 
-        switch(instruction){
-            case 'bezier': bezier(instructions.next().value, edgeMatrix); break;
-            case 'box': box(instructions.next().value, polygonMatrix, transformerPeekStack, image); break; //
-            case 'circle': circle(instructions.next().value, edgeMatrix); break;
-            case 'clear': clear(edgeMatrix, polygonMatrix, image); break;
-            case 'display': display(image, edgeMatrix); break;
-            case 'hermite': hermite(instructions.next().value, edgeMatrix); break;
-            case 'ident': ident(transformerPeekStack); break;
-            case 'line': line(instructions.next().value, edgeMatrix); break;
-            case TransformationTypes.move: move(instructions.next().value, transformerPeekStack); break;
-            case TransformationTypes.rotate: rotate(instructions.next().value, transformerPeekStack); break;
-            case TransformationTypes.scale: scale(instructions.next().value, transformerPeekStack); break;
-            case 'obj': obj(instructions.next().value, polygonMatrix, transformerPeekStack, image); break;
-            case 'pop': pop(transformationStack); break;
+            // 3d shapes
+            case 'sphere': sphere(command.args as number[], symbols.get(command.constants), polygonMatrix, transformerPeekStack, image); break;
+            case 'box': box(command.args as number[], symbols.get(command.constants), polygonMatrix, transformerPeekStack, image); break;
+            case 'torus': torus(command.args as number[], symbols.get(command.constants), polygonMatrix, transformerPeekStack, image); break;
+            case 'mesh': mesh(symbols.get(command.constants), (command.args as string[])[0], polygonMatrix, transformerPeekStack, image); break;
+
+            // transformation
             case 'push': push(transformationStack); break;
-            case 'save': save(instructions.next().value, image, edgeMatrix, polygonMatrix); break;
-            case 'sphere': sphere(instructions.next().value, polygonMatrix, transformerPeekStack, image); break; //
-            case 'torus': torus(instructions.next().value, polygonMatrix, transformerPeekStack, image); break;  //
-            case ' ': case '': case '\n': break; // Ignore new lines
-            default: throw new Error(`Do not understand '${instruction}'`);
-        }
+            case 'pop': pop(transformationStack); break;
+            case 'move': move(command.args as number[], transformerPeekStack, command.knob); break;
+            case 'rotate': rotate(command.args, transformerPeekStack, command.knob); break;
+            case 'scale': scale(command.args, transformerPeekStack, command.knob); break;
 
-        instruction = instructions.next().value;
+            // controls
+            case 'display': display(image, edgeMatrix); break;
+            case 'save': save((command.args as string[])[0], image, edgeMatrix, polygonMatrix); break;
+            case 'clear': clear(edgeMatrix, polygonMatrix, image); break;
+
+            default: {
+                throw new Error("Failed to parse: " + command.op);
+            }
+        }
     }
-};
+}
+
+function mesh(color: SymbolColor, fileName: string, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
+    if(fileName.endsWith(".obj")){
+        objParser(fileName, polygonMatrix);
+        multiplyEdgeMatrix(transformer, polygonMatrix);
+        draw(image, polygonMatrix, color);
+    }
+}
 
 function bezier(parameter: string, edgeMatrix: EdgeMatrix){
     const [x0, y0, x1, y1, x2, y2, x3, y3] = parameter.split(" ").map(val => parseInt(val));
     bezierCurve(x0, y0, x1, y1, x2, y2, x3, y3, edgeMatrix);
 }
 
-function box(parameter: string, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
-    const [x, y, z, width, height, depth] = parameter.split(" ").map(val => parseInt(val));
+function box(args: number[], color: SymbolColor, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
+    const [x, y, z, width, height, depth] = args;
     drawBox(x, y, z, width, height, depth, polygonMatrix);
     multiplyEdgeMatrix(transformer, polygonMatrix);
-    draw(image, polygonMatrix);
+    draw(image, polygonMatrix, color);
 }
 
 function circle(parameter: string, edgeMatrix: EdgeMatrix){
@@ -140,51 +157,57 @@ function hermite(parameter: string, edgeMatrix: EdgeMatrix){
     hermiteCurve(x0, y0, x1, y1, rx0, ry0, rx1, ry1, edgeMatrix);
 }
 
-function ident(transformer: Transformer){
-    toIdentity(transformer);
-}
-
 function line(parameter: string, edgeMatrix: EdgeMatrix){
     const [x0, y0, z0, x1, y1, z1] = parameter.split(" ").map(value => parseInt(value));
     addEdge(edgeMatrix, [x0, y0, z0], [x1, y1, z1]);
 }
 
-function move(parameter: string, transformer: Transformer){
-    const [x, y, z] = parameter.split(" ").map(value => parseInt(value));
-
+/**
+ * Adds the move transformation to the transformer
+ * @param args [x, y, z]
+ * @param transformer Transformer to be modified
+ * @param knob
+ */
+function move(args: number[], transformer: Transformer, knob?: string|null){
+    const [x, y, z] = args;
     toMove(transformer, x, y, z);
 }
 
-function rotate(parameter: string, transformer: Transformer){
-    const parameters = parameter.split(" ");
-    const degrees = parseFloat(parameters[1]);
-    let axis = parameters[0] as keyof typeof Axis;
+/**
+ * Adds the rotate transformation to the transformer
+ * @param args ["x"|"y"|"z", degrees]
+ * @param transformer
+ * @param knob
+ */
+function rotate(args: any[], transformer: Transformer, knob?: string|null){
+    const axis = args[0] as keyof typeof Axis;
+    const degrees = args[1];
     toRotate(transformer, degrees, Axis[axis]);
 }
 
-function scale(parameter: string, transformer: Transformer){
-    const [x, y, z] = parameter.split(" ").map(value => parseFloat(value));
+/**
+ * Adds the scale transformation to the transformer
+ * @param args [x, y, z]
+ * @param transformer
+ * @param knob
+ */
+function scale(args: any[], transformer: Transformer, knob?: string|null){
+    const [x, y, z] = args;
     toScale(transformer, x, y, z);
 }
 
-function sphere(parameter: string, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
-    const [x, y, z, radius] = parameter.split(" ").map(value => parseInt(value));
+function sphere(args: number[], color: SymbolColor, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image, cs?: string){
+    const [x, y, z, radius] = args;
     drawSphere(polygonMatrix, x, y, z, radius);
     multiplyEdgeMatrix(transformer, polygonMatrix);
-    draw(image, polygonMatrix);
+    draw(image, polygonMatrix, color);
 }
 
-function torus(parameter: string, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
-    const [x, y, z, radius1, radius2] = parameter.split(" ").map(value => parseInt(value));
+function torus(args: number[], color: SymbolColor, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
+    const [x, y, z, radius1, radius2] = args;
     drawTorus(polygonMatrix, x, y, z, radius1, radius2);
     multiplyEdgeMatrix(transformer, polygonMatrix);
-    draw(image, polygonMatrix);
-}
-
-function obj(fileName: string, polygonMatrix: PolygonMatrix, transformer: Transformer, image: Image){
-    objParser(fileName, polygonMatrix);
-    multiplyEdgeMatrix(transformer, polygonMatrix);
-    draw(image, polygonMatrix);
+    draw(image, polygonMatrix, color);
 }
 
 function pop(transformationStack: Transformer[]){
@@ -197,16 +220,19 @@ function push(transformationStack: Transformer[]){
     transformationStack.push(deepCopyTransformer(peekStack));
 }
 
-function save(parameter: string, image: Image, edgeMatrix: EdgeMatrix, polygonMatrix: PolygonMatrix){
-    image.saveToDisk(parameter);
+function save(fileName: string, image: Image, edgeMatrix: EdgeMatrix, polygonMatrix: PolygonMatrix){
+    image.saveToDisk(fileName);
     image.clear();
 }
 
-function draw(image: Image, polygonMatrix: PolygonMatrix){
+function draw(image: Image, polygonMatrix: PolygonMatrix, symbolColor: SymbolColor){
+    if(symbolColor == undefined){
+        symbolColor = symbols.get(DEFAULT_WHITE);
+    }
     toInteger(polygonMatrix);
-    image.drawPolygons(polygonMatrix);
+    image.drawPolygons(polygonMatrix, symbolColor);
     // clear polygon drawn
     polygonMatrix.length = 0;
 }
 
-export default parser;
+export default parse;

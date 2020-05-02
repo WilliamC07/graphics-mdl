@@ -1,7 +1,16 @@
-import {getInstructions} from "./parser";
 import {Point, createPolygonMatrix, toInteger, PolygonMatrix} from "../matrix";
 import Image from "../image";
 import {addPolygon} from "../matrix";
+import fs from 'fs';
+
+function *getInstructions(fileName: string): IterableIterator<string>{
+    const lines: string[] = fs.readFileSync(fileName, "utf-8").split("\n");
+    let lineNumber = 0;
+    while(lineNumber < lines.length){
+        yield lines[lineNumber];
+        lineNumber++;
+    }
+}
 
 export const objParser = (source: string, polygons: PolygonMatrix) => {
     const instructions = getInstructions(source);

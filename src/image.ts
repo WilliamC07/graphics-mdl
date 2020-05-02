@@ -2,7 +2,7 @@ import {Edge, EdgeMatrix, PolygonMatrix} from "./matrix";
 import {exec} from "child_process";
 import fs from "fs";
 import {dotProduct, calculateSurfaceNormal, Vector, vectorize} from "./utility/math-utility";
-import {calculateColor, Color, viewingVector} from "./render/lighting";
+import {calculateColor, Color, SymbolColor, viewingVector} from "./render/lighting";
 
 export default class Image {
     public columns: number;
@@ -41,9 +41,7 @@ export default class Image {
         }
     }
 
-    public drawPolygons(polygons: PolygonMatrix){
-        let colorIndex = 0;
-
+    public drawPolygons(polygons: PolygonMatrix, symbolColor: SymbolColor){
         for(let point = 0; point < polygons.length - 2; point+=3){
             const p0 = polygons[point];
             const p1 = polygons[point + 1];
@@ -57,7 +55,7 @@ export default class Image {
             // For the triangle to be drawn, the angle between the surfaceNormal and viewVector needs to be
             // between -90 degrees and 90 degrees
             if(dotProduct(surfaceNormal, viewingVector) > 0) {
-                const color = calculateColor(surfaceNormal);
+                const color = calculateColor(surfaceNormal, symbolColor);
 
                 // organize the points of the triangle by their y values
                 let [bottom, middle, top] = [p0, p1, p2];
