@@ -221,6 +221,10 @@ function push(transformationStack: Transformer[]){
 }
 
 function save(fileName: string, image: Image, edgeMatrix: EdgeMatrix, polygonMatrix: PolygonMatrix){
+    if(!fileName.endsWith(".png")){
+        fileName += ".png";
+    }
+    console.log("saving as", fileName);
     image.saveToDisk(fileName);
     image.clear();
 }
