@@ -1,4 +1,3 @@
-constants dull_yellow 0.3 0.8 0.2 0.3 0.8 0.2 0 0 0
 push
 move 230 250 0
 scale .43 .43 .43
@@ -6,3 +5,4 @@ rotate x -80
 rotate z -45
 mesh :house
 display
+save image.png
